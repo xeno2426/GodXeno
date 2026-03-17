@@ -5,36 +5,37 @@ import pg8000
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 if not DATABASE_URL:
-    print("DATABASE_URL not set!")
-    sys.exit(1)
+    print("DATABASE_URL not set!"); sys.exit(1)
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MYSITE     = os.path.join(SCRIPT_DIR, "mysite")
-DATA_DIR   = os.path.join(MYSITE, "data")
+ROOT     = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(ROOT, "mysite", "data")
+MYSITE   = os.path.join(ROOT, "mysite")
 
 def get_conn():
     u = urlparse(DATABASE_URL)
-    return pg8000.native.Connection(
+    return pg8000.connect(
         user=u.username, password=u.password,
         host=u.hostname, port=u.port or 5432,
         database=u.path.lstrip("/"), ssl_context=True
     )
 
-def run(sql, *params):
+def run(sql, params=()):
+    sql = sql.replace(":1","%s").replace(":2","%s").replace(":3","%s")\
+             .replace(":4","%s").replace(":5","%s").replace(":6","%s")\
+             .replace(":7","%s").replace(":8","%s")
     conn = get_conn()
     try:
-        conn.run(sql, *params)
+        cur = conn.cursor()
+        cur.execute(sql, list(params))
+        conn.commit()
     finally:
         conn.close()
 
 def load_json(path, default):
-    if not os.path.exists(path):
-        return default
+    if not os.path.exists(path): return default
     try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return default
+        with open(path, encoding="utf-8") as f: return json.load(f)
+    except: return default
 
 def parse_ts(s):
     if not s: return None
@@ -57,20 +58,16 @@ def init_schema():
         "CREATE TABLE IF NOT EXISTS unread (username TEXT NOT NULL, from_user TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (username, from_user))",
         """CREATE TABLE IF NOT EXISTS messages (
             id SERIAL PRIMARY KEY, sender TEXT NOT NULL, recipient TEXT NOT NULL,
-            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text',
-            filename TEXT DEFAULT '', url TEXT DEFAULT '',
-            seen BOOLEAN DEFAULT FALSE, reply_to INTEGER,
+            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text', filename TEXT DEFAULT '',
+            url TEXT DEFAULT '', seen BOOLEAN DEFAULT FALSE, reply_to INTEGER,
             reactions TEXT DEFAULT '{}', deleted BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT NOW())""",
-        """CREATE TABLE IF NOT EXISTS groups (
-            group_id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL,
-            avatar TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
+        "CREATE TABLE IF NOT EXISTS groups (group_id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL, avatar TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
         "CREATE TABLE IF NOT EXISTS group_members (group_id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (group_id, username))",
         """CREATE TABLE IF NOT EXISTS group_messages (
             id SERIAL PRIMARY KEY, group_id TEXT NOT NULL, sender TEXT NOT NULL,
-            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text',
-            filename TEXT DEFAULT '', url TEXT DEFAULT '',
-            reply_to INTEGER, reactions TEXT DEFAULT '{}',
+            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text', filename TEXT DEFAULT '',
+            url TEXT DEFAULT '', reply_to INTEGER, reactions TEXT DEFAULT '{}',
             deleted BOOLEAN DEFAULT FALSE, seen_by TEXT DEFAULT '[]',
             created_at TIMESTAMP DEFAULT NOW())""",
         "CREATE TABLE IF NOT EXISTS notes (id SERIAL PRIMARY KEY, username TEXT NOT NULL, title TEXT DEFAULT '', body TEXT DEFAULT '', image TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
@@ -79,67 +76,59 @@ def init_schema():
     ]
     conn = get_conn()
     try:
-        for s in stmts:
-            conn.run(s)
+        cur = conn.cursor()
+        for s in stmts: cur.execute(s)
+        conn.commit()
         print("Schema ready")
     finally:
         conn.close()
 
 def migrate():
     init_schema()
-
     users_json = load_json(os.path.join(DATA_DIR, "users.json"), {})
     print(f"\nMigrating {len(users_json)} users...")
     for uname, info in users_json.items():
-        run("""INSERT INTO users(username,password_hash,email,bio,avatar,recovery)
-               VALUES(:1,:2,:3,:4,:5,:6) ON CONFLICT(username) DO NOTHING""",
-            uname, info.get("password_hash",""), info.get("email",""),
-            info.get("bio",""), info.get("avatar",""), info.get("recovery",""))
+        run("INSERT INTO users(username,password_hash,email,bio,avatar,recovery) VALUES(:1,:2,:3,:4,:5,:6) ON CONFLICT(username) DO NOTHING",
+            (uname, info.get("password_hash",""), info.get("email",""),
+             info.get("bio",""), info.get("avatar",""), info.get("recovery","")))
         ls = parse_ts(info.get("last_seen"))
-        if ls:
-            run("UPDATE users SET last_seen=:1 WHERE username=:2", ls, uname)
+        if ls: run("UPDATE users SET last_seen=:1 WHERE username=:2", (ls, uname))
         for friend in info.get("friends", []):
             if friend in users_json:
                 a, b = sorted([uname, friend])
-                run("INSERT INTO friends(user1,user2) VALUES(:1,:2) ON CONFLICT DO NOTHING", a, b)
+                run("INSERT INTO friends(user1,user2) VALUES(:1,:2) ON CONFLICT DO NOTHING", (a, b))
         for from_user, count in info.get("unread", {}).items():
             if count and int(count) > 0:
-                run("""INSERT INTO unread(username,from_user,count) VALUES(:1,:2,:3)
-                       ON CONFLICT(username,from_user) DO UPDATE SET count=:3""",
-                    uname, from_user, int(count))
-        print(f"  {uname}")
-
+                run("INSERT INTO unread(username,from_user,count) VALUES(:1,:2,:3) ON CONFLICT(username,from_user) DO UPDATE SET count=EXCLUDED.count",
+                    (uname, from_user, int(count)))
+        print(f"  {uname} done")
     print("\nMigrating messages...")
     total = 0
     for path in glob.glob(os.path.join(DATA_DIR, "chat_*__*.json")):
         for m in load_json(path, []):
-            sender = m.get("from") or m.get("sender","")
-            recipient = m.get("to") or m.get("recipient","")
-            if sender and recipient:
+            s = m.get("from") or m.get("sender","")
+            r = m.get("to") or m.get("recipient","")
+            if s and r:
                 run("INSERT INTO messages(sender,recipient,text,ftype,filename,url) VALUES(:1,:2,:3,:4,:5,:6)",
-                    sender, recipient, m.get("text",""), m.get("ftype","text"),
-                    m.get("filename",""), m.get("url",""))
+                    (s, r, m.get("text",""), m.get("ftype","text"), m.get("filename",""), m.get("url","")))
                 total += 1
     print(f"  {total} messages done")
-
     print("\nMigrating groups...")
     for gid, g in load_json(os.path.join(DATA_DIR, "groups.json"), {}).items():
         run("INSERT INTO groups(group_id,name,owner,avatar) VALUES(:1,:2,:3,:4) ON CONFLICT DO NOTHING",
-            gid, g.get("name","Group"), g.get("owner",""), g.get("avatar",""))
-        for member in g.get("members", []):
-            run("INSERT INTO group_members(group_id,username) VALUES(:1,:2) ON CONFLICT DO NOTHING", gid, member)
+            (gid, g.get("name","Group"), g.get("owner",""), g.get("avatar","")))
+        for member in g.get("members",[]):
+            run("INSERT INTO group_members(group_id,username) VALUES(:1,:2) ON CONFLICT DO NOTHING",(gid,member))
         gmsgs = load_json(os.path.join(DATA_DIR, f"group_{gid}.json"), [])
         for m in gmsgs:
             sender = m.get("from") or m.get("sender","")
             if sender:
                 run("INSERT INTO group_messages(group_id,sender,text,ftype,filename,url,seen_by) VALUES(:1,:2,:3,:4,:5,:6,:7)",
-                    gid, sender, m.get("text",""), m.get("ftype","text"),
-                    m.get("filename",""), m.get("url",""),
-                    json.dumps(m.get("seen_by",[sender])))
-        print(f"  '{g.get('name')}' ({len(gmsgs)} msgs)")
-
+                    (gid, sender, m.get("text",""), m.get("ftype","text"),
+                     m.get("filename",""), m.get("url",""), json.dumps(m.get("seen_by",[sender]))))
+        print(f"  '{g.get('name')}' done")
     print("\nMigrating notes...")
-    total_notes = 0
+    total_n = 0
     notes_dir = os.path.join(DATA_DIR, "notes")
     if os.path.isdir(notes_dir):
         for fname in os.listdir(notes_dir):
@@ -147,20 +136,25 @@ def migrate():
                 uname = fname.replace("_notes.json","")
                 for n in load_json(os.path.join(notes_dir, fname), []):
                     run("INSERT INTO notes(username,title,body,image) VALUES(:1,:2,:3,:4)",
-                        uname, n.get("title",""), n.get("body",""), n.get("image",""))
-                    total_notes += 1
-    print(f"  {total_notes} notes done")
-
+                        (uname, n.get("title",""), n.get("body",""), n.get("image","")))
+                    total_n += 1
+    for fname in os.listdir(DATA_DIR):
+        if fname.startswith("notes_") and fname.endswith(".json"):
+            uname = fname[6:-5]
+            for n in load_json(os.path.join(DATA_DIR, fname), []):
+                run("INSERT INTO notes(username,title,body,image) VALUES(:1,:2,:3,:4)",
+                    (uname, n.get("title",""), n.get("body",""), n.get("image","")))
+                total_n += 1
+    print(f"  {total_n} notes done")
     print("\nMigrating stories...")
     total_s = 0
     for uname, slist in load_json(os.path.join(MYSITE, "stories.json"), {}).items():
         for s in slist:
             if s.get("file"):
                 run("INSERT INTO stories(username,file,media_type) VALUES(:1,:2,:3)",
-                    uname, s["file"], s.get("type","image"))
+                    (uname, s["file"], s.get("type","image")))
                 total_s += 1
     print(f"  {total_s} stories done")
-
     print("\nMigration complete!")
 
 if __name__ == "__main__":
