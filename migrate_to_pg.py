@@ -1,181 +1,167 @@
-"""
-migrate_to_pg.py — One-time migration: GodXeno JSON files → Neon Postgres
-
-Usage (run from PythonAnywhere Bash console):
-    cd ~/mysite
-    DATABASE_URL="postgresql://neondb_owner:YOUR_PASS@ep-floral-field-a13croew-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" python3 ~/migrate_to_pg.py
-
-Make sure db.py is in ~/mysite/ first.
-"""
-
-import os, sys, json
+import os, sys, json, glob
 from datetime import datetime
+from urllib.parse import urlparse
+import pg8000
 
-# ── point to your mysite directory so we can import db ──────────────────────
-MYSITE = os.path.join(os.path.dirname(__file__), "mysite")
-sys.path.insert(0, MYSITE)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not DATABASE_URL:
+    print("DATABASE_URL not set!")
+    sys.exit(1)
 
-DATA_DIR = os.path.join(MYSITE, "data")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MYSITE     = os.path.join(SCRIPT_DIR, "mysite")
+DATA_DIR   = os.path.join(MYSITE, "data")
 
-import db
+def get_conn():
+    u = urlparse(DATABASE_URL)
+    return pg8000.native.Connection(
+        user=u.username, password=u.password,
+        host=u.hostname, port=u.port or 5432,
+        database=u.path.lstrip("/"), ssl_context=True
+    )
+
+def run(sql, *params):
+    conn = get_conn()
+    try:
+        conn.run(sql, *params)
+    finally:
+        conn.close()
 
 def load_json(path, default):
     if not os.path.exists(path):
         return default
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except:
         return default
 
 def parse_ts(s):
-    if not s:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(s, fmt)
-        except Exception:
-            pass
+    if not s: return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try: return datetime.strptime(s, fmt)
+        except: pass
     return None
 
-def run():
-    print("🚀 Initialising DB schema...")
-    db.init_db()
+def init_schema():
+    print("Creating tables...")
+    stmts = [
+        """CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY, password_hash TEXT DEFAULT '',
+            email TEXT DEFAULT '', bio TEXT DEFAULT '', avatar TEXT DEFAULT '',
+            recovery TEXT DEFAULT '', last_seen TIMESTAMP, typing_to TEXT DEFAULT '',
+            typing_ts TIMESTAMP, typing_group TEXT DEFAULT '',
+            typing_group_ts TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())""",
+        "CREATE TABLE IF NOT EXISTS friends (user1 TEXT NOT NULL, user2 TEXT NOT NULL, PRIMARY KEY (user1, user2))",
+        "CREATE TABLE IF NOT EXISTS friend_requests (from_user TEXT NOT NULL, to_user TEXT NOT NULL, PRIMARY KEY (from_user, to_user))",
+        "CREATE TABLE IF NOT EXISTS unread (username TEXT NOT NULL, from_user TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (username, from_user))",
+        """CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text',
+            filename TEXT DEFAULT '', url TEXT DEFAULT '',
+            seen BOOLEAN DEFAULT FALSE, reply_to INTEGER,
+            reactions TEXT DEFAULT '{}', deleted BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW())""",
+        """CREATE TABLE IF NOT EXISTS groups (
+            group_id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL,
+            avatar TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
+        "CREATE TABLE IF NOT EXISTS group_members (group_id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (group_id, username))",
+        """CREATE TABLE IF NOT EXISTS group_messages (
+            id SERIAL PRIMARY KEY, group_id TEXT NOT NULL, sender TEXT NOT NULL,
+            text TEXT DEFAULT '', ftype TEXT DEFAULT 'text',
+            filename TEXT DEFAULT '', url TEXT DEFAULT '',
+            reply_to INTEGER, reactions TEXT DEFAULT '{}',
+            deleted BOOLEAN DEFAULT FALSE, seen_by TEXT DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT NOW())""",
+        "CREATE TABLE IF NOT EXISTS notes (id SERIAL PRIMARY KEY, username TEXT NOT NULL, title TEXT DEFAULT '', body TEXT DEFAULT '', image TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS stories (id SERIAL PRIMARY KEY, username TEXT NOT NULL, file TEXT NOT NULL, media_type TEXT DEFAULT 'image', created_at TIMESTAMP DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS otps (username TEXT PRIMARY KEY, otp TEXT NOT NULL, expires_at TIMESTAMP NOT NULL)",
+    ]
+    conn = get_conn()
+    try:
+        for s in stmts:
+            conn.run(s)
+        print("Schema ready")
+    finally:
+        conn.close()
 
-    # ── Users ────────────────────────────────────────────────────────────────
+def migrate():
+    init_schema()
+
     users_json = load_json(os.path.join(DATA_DIR, "users.json"), {})
-    print(f"\n👤 Migrating {len(users_json)} users...")
+    print(f"\nMigrating {len(users_json)} users...")
     for uname, info in users_json.items():
-        db.create_user(
-            username     = uname,
-            password_hash= info.get("password_hash", ""),
-            email        = info.get("email", ""),
-            bio          = info.get("bio", ""),
-            avatar       = info.get("avatar", ""),
-            recovery     = info.get("recovery", ""),
-        )
-        updates = {}
-        if info.get("last_seen"):
-            updates["last_seen"] = parse_ts(info["last_seen"])
-        if info.get("typing_to"):
-            updates["typing_to"] = info["typing_to"]
-        if info.get("typing_ts"):
-            updates["typing_ts"] = parse_ts(info["typing_ts"])
-        if info.get("typing_group"):
-            updates["typing_group"] = info["typing_group"]
-        if info.get("typing_group_ts"):
-            updates["typing_group_ts"] = parse_ts(info["typing_group_ts"])
-        if updates:
-            db.update_user(uname, **updates)
-
-        # friends
+        run("""INSERT INTO users(username,password_hash,email,bio,avatar,recovery)
+               VALUES(:1,:2,:3,:4,:5,:6) ON CONFLICT(username) DO NOTHING""",
+            uname, info.get("password_hash",""), info.get("email",""),
+            info.get("bio",""), info.get("avatar",""), info.get("recovery",""))
+        ls = parse_ts(info.get("last_seen"))
+        if ls:
+            run("UPDATE users SET last_seen=:1 WHERE username=:2", ls, uname)
         for friend in info.get("friends", []):
             if friend in users_json:
-                db.add_friend(uname, friend)
-
-        # unread
+                a, b = sorted([uname, friend])
+                run("INSERT INTO friends(user1,user2) VALUES(:1,:2) ON CONFLICT DO NOTHING", a, b)
         for from_user, count in info.get("unread", {}).items():
-            if count and count > 0:
-                for _ in range(int(count)):
-                    db.increment_unread(uname, from_user)
+            if count and int(count) > 0:
+                run("""INSERT INTO unread(username,from_user,count) VALUES(:1,:2,:3)
+                       ON CONFLICT(username,from_user) DO UPDATE SET count=:3""",
+                    uname, from_user, int(count))
+        print(f"  {uname}")
 
-        print(f"  ✓ {uname}")
+    print("\nMigrating messages...")
+    total = 0
+    for path in glob.glob(os.path.join(DATA_DIR, "chat_*__*.json")):
+        for m in load_json(path, []):
+            sender = m.get("from") or m.get("sender","")
+            recipient = m.get("to") or m.get("recipient","")
+            if sender and recipient:
+                run("INSERT INTO messages(sender,recipient,text,ftype,filename,url) VALUES(:1,:2,:3,:4,:5,:6)",
+                    sender, recipient, m.get("text",""), m.get("ftype","text"),
+                    m.get("filename",""), m.get("url",""))
+                total += 1
+    print(f"  {total} messages done")
 
-    # ── Direct Messages ───────────────────────────────────────────────────────
-    print("\n💬 Migrating direct messages...")
-    import glob
-    chat_files = glob.glob(os.path.join(DATA_DIR, "chat_*__*.json"))
-    total_msgs = 0
-    for path in chat_files:
-        msgs = load_json(path, [])
-        for m in msgs:
-            sender    = m.get("from") or m.get("sender", "")
-            recipient = m.get("to")   or m.get("recipient", "")
-            if not sender or not recipient:
-                continue
-            text     = m.get("text", "")
-            ftype    = m.get("ftype", "text")
-            filename = m.get("filename", "")
-            url      = m.get("url", "")
-            db.send_message(sender, recipient, text, ftype, filename, url)
-            total_msgs += 1
-    print(f"  ✓ {total_msgs} messages migrated")
-
-    # ── Groups ────────────────────────────────────────────────────────────────
-    print("\n👥 Migrating groups...")
-    groups_json = load_json(os.path.join(DATA_DIR, "groups.json"), {})
-    for gid, g in groups_json.items():
-        db.create_group(
-            group_id = gid,
-            name     = g.get("name", "Group"),
-            owner    = g.get("owner", ""),
-            avatar   = g.get("avatar", ""),
-        )
+    print("\nMigrating groups...")
+    for gid, g in load_json(os.path.join(DATA_DIR, "groups.json"), {}).items():
+        run("INSERT INTO groups(group_id,name,owner,avatar) VALUES(:1,:2,:3,:4) ON CONFLICT DO NOTHING",
+            gid, g.get("name","Group"), g.get("owner",""), g.get("avatar",""))
         for member in g.get("members", []):
-            db.add_group_member(gid, member)
-
-        # group messages
-        gpath = os.path.join(DATA_DIR, f"group_{gid}.json")
-        gmsgs = load_json(gpath, [])
+            run("INSERT INTO group_members(group_id,username) VALUES(:1,:2) ON CONFLICT DO NOTHING", gid, member)
+        gmsgs = load_json(os.path.join(DATA_DIR, f"group_{gid}.json"), [])
         for m in gmsgs:
-            sender = m.get("from") or m.get("sender", "")
-            if not sender:
-                continue
-            db.send_group_message(
-                group_id = gid,
-                sender   = sender,
-                text     = m.get("text", ""),
-                ftype    = m.get("ftype", "text"),
-                filename = m.get("filename", ""),
-                url      = m.get("url", ""),
-            )
-        print(f"  ✓ group '{g.get('name')}' ({len(gmsgs)} messages)")
+            sender = m.get("from") or m.get("sender","")
+            if sender:
+                run("INSERT INTO group_messages(group_id,sender,text,ftype,filename,url,seen_by) VALUES(:1,:2,:3,:4,:5,:6,:7)",
+                    gid, sender, m.get("text",""), m.get("ftype","text"),
+                    m.get("filename",""), m.get("url",""),
+                    json.dumps(m.get("seen_by",[sender])))
+        print(f"  '{g.get('name')}' ({len(gmsgs)} msgs)")
 
-    # ── Notes ─────────────────────────────────────────────────────────────────
-    print("\n📝 Migrating notes...")
-    notes_dir = os.path.join(DATA_DIR, "notes")
+    print("\nMigrating notes...")
     total_notes = 0
+    notes_dir = os.path.join(DATA_DIR, "notes")
     if os.path.isdir(notes_dir):
         for fname in os.listdir(notes_dir):
-            if not fname.endswith("_notes.json"):
-                continue
-            uname = fname.replace("_notes.json", "")
-            notes = load_json(os.path.join(notes_dir, fname), [])
-            for n in notes:
-                db.add_note(uname, n.get("title",""), n.get("body",""), n.get("image",""))
-                total_notes += 1
-    # also legacy notes_username.json
-    for fname in os.listdir(DATA_DIR):
-        if fname.startswith("notes_") and fname.endswith(".json"):
-            uname = fname[6:-5]
-            notes = load_json(os.path.join(DATA_DIR, fname), [])
-            for n in notes:
-                db.add_note(uname, n.get("title",""), n.get("body",""), n.get("image",""))
-                total_notes += 1
-    print(f"  ✓ {total_notes} notes migrated")
+            if fname.endswith("_notes.json"):
+                uname = fname.replace("_notes.json","")
+                for n in load_json(os.path.join(notes_dir, fname), []):
+                    run("INSERT INTO notes(username,title,body,image) VALUES(:1,:2,:3,:4)",
+                        uname, n.get("title",""), n.get("body",""), n.get("image",""))
+                    total_notes += 1
+    print(f"  {total_notes} notes done")
 
-    # ── Stories ───────────────────────────────────────────────────────────────
-    print("\n📸 Migrating stories...")
-    stories_file = os.path.join(MYSITE, "stories.json")
-    stories_json = load_json(stories_file, {})
-    total_stories = 0
-    for uname, story_list in stories_json.items():
-        for s in story_list:
-            file_url   = s.get("file", "")
-            media_type = s.get("type", "image")
-            if file_url:
-                db.add_story(uname, file_url, media_type)
-                total_stories += 1
-    print(f"  ✓ {total_stories} stories migrated")
+    print("\nMigrating stories...")
+    total_s = 0
+    for uname, slist in load_json(os.path.join(MYSITE, "stories.json"), {}).items():
+        for s in slist:
+            if s.get("file"):
+                run("INSERT INTO stories(username,file,media_type) VALUES(:1,:2,:3)",
+                    uname, s["file"], s.get("type","image"))
+                total_s += 1
+    print(f"  {total_s} stories done")
 
-    print("\n✅ Migration complete! All data is now in Neon Postgres.")
-    print("   Next step: upload db.py to ~/mysite/ on PythonAnywhere")
-    print("   Then set DATABASE_URL in PythonAnywhere environment variables")
-    print("   Then update app.py imports to use db instead of JSON helpers")
+    print("\nMigration complete!")
 
 if __name__ == "__main__":
-    if not os.environ.get("DATABASE_URL"):
-        print("❌ DATABASE_URL env var not set!")
-        print('   Run with: DATABASE_URL="postgresql://..." python3 migrate_to_pg.py')
-        sys.exit(1)
-    run()
+    migrate()
