@@ -1,0 +1,165 @@
+[
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "Chutiya",
+    "time": "2025-12-07 06:32:20",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Tu",
+    "time": "2025-12-07 06:32:34",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "Tu",
+    "time": "2025-12-07 06:32:48",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reactions": {}
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Tu",
+    "time": "2025-12-07 06:32:53",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Hi",
+    "time": "2025-12-07 09:16:53",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "",
+    "time": "2025-12-07 12:19:58",
+    "ftype": "file",
+    "filename": "Arrow.png",
+    "url": "/uploads/Santvik/Arrow.png",
+    "seen": true
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Hi",
+    "time": "2025-12-07 12:20:25",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "",
+    "time": "2025-12-07 12:20:30",
+    "ftype": "file",
+    "filename": "clear.ogg",
+    "url": "/uploads/Santvik/clear.ogg",
+    "seen": true
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "Heelo",
+    "time": "2025-12-08 07:14:51",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reply_to": 2,
+    "reactions": {},
+    "deleted": false
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "Heelo",
+    "time": "2025-12-08 07:14:52",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reply_to": 2,
+    "reactions": {
+      "GodXeno": "\u2764\ufe0f"
+    },
+    "deleted": false
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Hiiiii",
+    "time": "2025-12-08 10:37:35",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reply_to": null,
+    "reactions": {},
+    "deleted": false
+  },
+  {
+    "from": "Santvik",
+    "to": "GodXeno",
+    "text": "",
+    "time": "2025-12-08 12:24:32",
+    "ftype": "file",
+    "filename": "IMG_20251208_175341.jpg",
+    "url": "/uploads/Santvik/IMG_20251208_175341.jpg",
+    "seen": true,
+    "reply_to": null,
+    "reactions": {
+      "GodXeno": "\u2764\ufe0f"
+    },
+    "deleted": false
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Hi",
+    "time": "2025-12-08 12:24:41",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reply_to": null,
+    "reactions": {},
+    "deleted": false
+  },
+  {
+    "from": "GodXeno",
+    "to": "Santvik",
+    "text": "Hello",
+    "time": "2025-12-08 12:24:54",
+    "ftype": "text",
+    "filename": "",
+    "url": "",
+    "seen": true,
+    "reply_to": null,
+    "reactions": {},
+    "deleted": false
+  }
+]

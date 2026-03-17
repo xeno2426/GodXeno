@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Snake — Xeno Edition</title>
+<style>
+  /* Basic dark UI similar to your app style */
+  :root{
+    --bg:#041022; --card:#0f1724; --muted:#94a3b8; --accent1:#38bdf8; --accent2:#7c3aed;
+    --bubble-from:#2dd4bf; --bubble-to:#60a5fa;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#020617);font-family:system-ui,-apple-system,Segoe UI,Roboto; -webkit-tap-highlight-color: transparent;}
+  /* prevent overscroll glow on Android */
+  body { overscroll-behavior: none; touch-action: none; }
+  .wrap{max-width:760px;margin:18px auto;padding:14px;}
+  .card{background:linear-gradient(180deg, rgba(15,23,42,.9), rgba(7,10,20,.9)); border-radius:18px;padding:14px;box-shadow:0 18px 40px rgba(0,0,0,.6);color:#e6eef6}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  h1{font-size:20px;margin:6px 0}
+  p.desc{color:var(--muted);margin:0 0 10px;font-size:14px}
+  .hud{display:flex;gap:10px;align-items:center}
+  .score{background:transparent;border-radius:999px;padding:8px 14px;border:1px solid rgba(148,163,184,.08);font-weight:700}
+  .start{margin-left:auto;background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#021025;padding:10px 16px;border-radius:999px;border:none;font-weight:700}
+  /* Canvas container */
+  .game-wrap{width:100%;aspect-ratio:9/10;background:repeating-conic-gradient(#022233 0% 12.5%, transparent 12.5% 25%) ;display:flex;align-items:center;justify-content:center;padding:12px;border-radius:12px;margin-top:12px}
+  canvas{background:transparent;border-radius:8px;max-width:100%;height:auto;touch-action:none}
+  /* Footer controls area (keeps layout like previous) */
+  .controls{margin-top:14px}
+  .hint{color:var(--muted);font-size:13px;margin-bottom:8px}
+  /* small landscape safe spacing */
+  @media(min-width:600px){ .wrap{padding:30px;} h1{font-size:24px} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h1>Snake — Xeno Edition</h1>
+          <p class="desc">Eat the food, grow your snake. Swipe anywhere to change direction.</p>
+        </div>
+        <div class="hud">
+          <div class="score" id="score">Score: 0</div>
+          <button id="startBtn" class="start">Start</button>
+        </div>
+      </div>
+
+      <div class="game-wrap" id="gameWrap">
+        <canvas id="gameCanvas" width="360" height="400"></canvas>
+      </div>
+
+      <div class="controls">
+        <div class="hint">Swipe anywhere on the game to control the snake — up / down / left / right. Page sliding disabled.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ========= Prevent page sliding on mobile ========== */
+(function(){
+  // Prevent default touchmove to stop page scroll (passive:false required)
+  document.addEventListener('touchmove', function(e){ e.preventDefault(); }, { passive:false });
+  // Also prevent double-tap zoom on iOS
+  let lastTouch = 0;
+  document.addEventListener('touchend', function(e){
+    const now = (new Date()).getTime();
+    if(now - lastTouch <= 300){
+      e.preventDefault();
+    }
+    lastTouch = now;
+  }, { passive:false });
+})();
+
+/* ========== Game code ========== */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('score');
+const wrap = document.getElementById('gameWrap');
+
+let W = canvas.width;
+let H = canvas.height;
+
+/* Grid settings */
+const CELL = 16;               // size of each cell
+let cols = Math.floor(W / CELL);
+let rows = Math.floor(H / CELL);
+
+function resizeCanvas(){
+  // Keep canvas internal resolution fixed for pixel logic, but scale CSS to fit container
+  W = 360; H = 400;
+  canvas.width = W; canvas.height = H;
+  cols = Math.floor(W / CELL);
+  rows = Math.floor(H / CELL);
+  canvas.style.width = '100%'; // responsive
+}
+resizeCanvas();
+
+/* Game state */
+let snake = [];
+let dir = {x:1, y:0}; // initial direction right
+let nextDir = null;
+let food = null;
+let running = false;
+let tickInterval = 120; // ms
+let tickTimer = null;
+let score = 0;
+
+/* Initialize snake so the HEAD is the last element (matching tick logic) */
+function initSnake(){
+  snake = [];
+  const cx = Math.floor(cols/2);
+  const cy = Math.floor(rows/2);
+  // push from tail -> head so the last element (index length-1) is the head
+  for(let i = 3; i >= 0; i--){
+    snake.push({ x: cx - i, y: cy });
+  }
+  // initial direction to the right
+  dir = { x: 1, y: 0 };
+  nextDir = null;
+}
+
+/* spawn food not on snake */
+function spawnFood(){
+  let tries=0;
+  while(true){
+    const fx = Math.floor(Math.random()*cols);
+    const fy = Math.floor(Math.random()*rows);
+    // ensure not on snake
+    if(!snake.some(s => s.x===fx && s.y===fy)){
+      food = {x:fx,y:fy};
+      break;
+    }
+    if(++tries>500) break;
+  }
+}
+
+/* draw */
+function draw(){
+  // clear background pattern handled by CSS; draw grid squares as subtle overlay
+  ctx.fillStyle = '#041826';
+  ctx.fillRect(0,0,W,H);
+
+  // draw checker (subtle)
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      if((x+y)%2===0){
+        ctx.fillStyle = 'rgba(0,0,0,0.02)';
+        ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+      }
+    }
+  }
+
+  // draw food
+  if(food){
+    ctx.fillStyle = '#ffde59';
+    roundRect(ctx, food.x*CELL + 2, food.y*CELL + 2, CELL-4, CELL-4, 6, true);
+  }
+
+  // draw snake with gradient for "you" side (right) and default for other
+  for(let i=0;i<snake.length;i++){
+    const s = snake[i];
+    const x = s.x*CELL + 1, y = s.y*CELL + 1, size = CELL - 2;
+    // head different color
+    if(i === snake.length - 1){
+      // gradient pill
+      const g = ctx.createLinearGradient(x, y, x+size, y+size);
+      g.addColorStop(0, '#60a5fa'); g.addColorStop(1, '#7c3aed');
+      ctx.fillStyle = g;
+      roundRect(ctx, x, y, size, size, 8, true);
+      // small shadow
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth=1;
+      ctx.strokeRect(x+0.5, y+0.5, size-1, size-1);
+    } else {
+      ctx.fillStyle = '#0ea5a4';
+      roundRect(ctx, x, y, size, size, 5, true);
+    }
+  }
+}
+
+/* helper rounded rect */
+function roundRect(ctx,x,y,w,h,r,fill){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+  if(fill) ctx.fill();
+}
+
+/* game tick */
+function tick(){
+  if(!running) return;
+
+  // apply queued direction change (if any), but prevent immediate reverse
+  if(nextDir){
+    if(!(nextDir.x === -dir.x && nextDir.y === -dir.y)){
+      dir = nextDir;
+    }
+    nextDir = null;
+  }
+
+  // current head is the last element
+  const head = snake[snake.length - 1];
+  const nx = head.x + dir.x;
+  const ny = head.y + dir.y;
+
+  // wrap edges
+  let newX = nx, newY = ny;
+  if(newX < 0) newX = cols - 1;
+  if(newX >= cols) newX = 0;
+  if(newY < 0) newY = rows - 1;
+  if(newY >= rows) newY = 0;
+
+  // check self collision BEFORE adding new head
+  if(snake.some(s => s.x === newX && s.y === newY)){
+    // game over: stop and allow restart
+    running = false;
+    if(tickTimer) clearInterval(tickTimer);
+    tickTimer = null;
+    startBtn.innerText = 'Restart';
+    startBtn.disabled = false;
+    return;
+  }
+
+  // add new head
+  snake.push({ x: newX, y: newY });
+
+  // did we eat food?
+  if(food && newX === food.x && newY === food.y){
+    score += 1;
+    scoreEl.innerText = 'Score: ' + score;
+    // spawn a new fruit immediately (unlimited)
+    spawnFood();
+    // do not remove tail (snake grows)
+  } else {
+    // normal move: remove tail
+    snake.shift();
+  }
+
+  // draw updated frame
+  draw();
+}
+
+/* Start/restart */
+function startGame(){
+  initSnake();
+  spawnFood();
+  score = 0;
+  scoreEl.innerText = 'Score: 0';
+  running = true;
+  startBtn.disabled = true;
+  // clear previous timer
+  if(tickTimer) clearInterval(tickTimer);
+  tickTimer = setInterval(tick, tickInterval);
+  draw();
+}
+
+/* Touch swipe detection (swipe-only control) */
+let touchStartX = 0, touchStartY = 0, touchInProgress = false;
+
+function onTouchStart(e){
+  if(e.touches && e.touches.length > 0){
+    const t = e.touches[0];
+    touchStartX = t.clientX; touchStartY = t.clientY;
+    touchInProgress = true;
+  }
+}
+
+function onTouchEnd(e){
+  if(!touchInProgress) return;
+  touchInProgress = false;
+  let endX, endY;
+  if(e.changedTouches && e.changedTouches[0]){
+    endX = e.changedTouches[0].clientX;
+    endY = e.changedTouches[0].clientY;
+  } else return;
+
+  const dx = endX - touchStartX;
+  const dy = endY - touchStartY;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  const threshold = 20; // minimal pixels to be counted as a swipe
+
+  if(Math.max(absDx, absDy) < threshold) return; // small tap — ignore
+
+  if(absDx > absDy){
+    // horizontal swipe
+    if(dx > 0) setDirection(1,0); else setDirection(-1,0);
+  } else {
+    // vertical swipe
+    if(dy > 0) setDirection(0,1); else setDirection(0,-1);
+  }
+}
+
+/* attach listeners on the canvas (passive:false allows preventDefault elsewhere) */
+canvas.removeEventListener('touchstart', onTouchStart);
+canvas.removeEventListener('touchend', onTouchEnd);
+canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+
+/* Start button */
+startBtn.addEventListener('click', function(){
+  if(running){
+    // stop
+    running = false;
+    startBtn.innerText = 'Start';
+    startBtn.disabled = false;
+    if(tickTimer) clearInterval(tickTimer);
+  } else {
+    startGame();
+    startBtn.innerText = 'Running...';
+  }
+});
+
+/* Initial draw */
+draw();
+
+/* Resize handling (if you later want to change internal grid) */
+window.addEventListener('resize', function(){
+  // keep CSS scaling; internal resolution fixed
+  draw();
+});
+
+</script>
+</body>
+</html>

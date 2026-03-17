@@ -1,0 +1,65 @@
+[
+  {
+    "from": "GodXeno",
+    "to": "GodXeno",
+    "text": "messages",
+    "time": "",
+    "ftype": "text",
+    "filename": "",
+    "url": ""
+  },
+  {
+    "from": "GodXeno",
+    "to": "GodXeno",
+    "text": "unread",
+    "time": "",
+    "ftype": "text",
+    "filename": "",
+    "url": ""
+  },
+  {
+    "from": "GodXeno",
+    "to": "Duffer",
+    "text": "Hello",
+    "time": "2025-12-06 09:38:53",
+    "ftype": "text",
+    "filename": "",
+    "url": ""
+  },
+  {
+    "from": "Duffer",
+    "to": "GodXeno",
+    "text": "Hie",
+    "time": "2025-12-06 09:39:21",
+    "ftype": "text",
+    "filename": "",
+    "url": ""
+  },
+  {
+    "from": "GodXeno",
+    "to": "Duffer",
+    "text": "What up",
+    "time": "2025-12-06 13:36:44",
+    "ftype": "text",
+    "filename": "",
+    "url": ""
+  },
+  {
+    "from": "GodXeno",
+    "to": "Duffer",
+    "text": "",
+    "time": "2025-12-06 13:37:19",
+    "ftype": "file",
+    "filename": "6_Dec_7.07_pm.aac",
+    "url": "/uploads/GodXeno/6_Dec_7.07_pm.aac"
+  },
+  {
+    "from": "GodXeno",
+    "to": "Duffer",
+    "text": "",
+    "time": "2025-12-06 13:38:17",
+    "ftype": "file",
+    "filename": "VID-20251113-WA0005.mp4",
+    "url": "/uploads/GodXeno/VID-20251113-WA0005.mp4"
+  }
+]
